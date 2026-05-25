@@ -21,7 +21,7 @@ brew services start ollama
 3. Run the Ollama CLI command to extract audio features (replace `llama3:8b` with your desired 
 model):
 ```bash
-ollama run llama3:8b
+ollama run qwen3:14b
 ```
 
 ### Install Audio Package
@@ -71,7 +71,8 @@ Env:
 ```bash
 WHISPER_BIN=whisper-cli
 WHISPER_MODEL=/opt/homebrew/share/whisper-cpp/ggml-large-v3-turbo.bin
-OLLAMA_MODEL=llama3:8b
+OLLAMA_MODEL=qwen3:14b
+OLLAMA_BASE_URL=http://localhost:11434/v1
 ```
 
 This project was created using `bun init` in bun v1.3.14. [Bun](https://bun.com) is a fast all-in-one JavaScript runtime.

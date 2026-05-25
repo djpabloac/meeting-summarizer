@@ -1,6 +1,10 @@
 # dependencies (bun install)
 node_modules
 
+# transcripciones cacheadas (generadas por el pipeline)
+transcriptions/
+!transcriptions/.gitkeep
+
 # output
 out
 dist
