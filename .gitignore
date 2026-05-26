@@ -5,6 +5,10 @@ node_modules
 transcriptions/
 !transcriptions/.gitkeep
 
+# proyectos generados (resúmenes, benchmarks, transcripciones)
+projects/
+!projects/.gitkeep
+
 # output
 out
 dist

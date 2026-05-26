@@ -6,85 +6,128 @@ inclusion: always
 
 ## Runtime y Comandos
 
-Este proyecto usa **Bun** como runtime. Todos los comandos de ejecución y desarrollo deben usar `bun`:
+Este proyecto usa **Bun** como runtime:
 
-- Ejecutar el script principal: `bun run index.ts <ruta-del-video-o-carpeta>`
+- Ejecutar: `bun run index.ts <ruta-del-video-o-carpeta>`
 - Instalar dependencias: `bun install`
-- Ejecutar TypeScript directamente (sin compilar): `bun run <archivo.ts>`
 
 ## Estructura del Proyecto
 
 ```
 meeting-summarizer/
-├── index.ts                    ← Entry point (delega a src/)
+├── index.ts                        ← Entry point
 ├── src/
-│   ├── index.ts                ← Orquestador principal del pipeline
-│   ├── config.ts               ← Configuración centralizada
-│   ├── extractAudio.ts         ← Paso 1: Extracción de audio con FFmpeg
-│   ├── transcribe.ts           ← Paso 2: Transcripción con whisper-cpp (con caché)
-│   ├── summarize.ts            ← Paso 3: Resumen con Ollama
-│   ├── progress.ts             ← Utilidades de progress bar y spinner
+│   ├── index.ts                    ← Orquestador del pipeline
+│   ├── config.ts                   ← Configuración
+│   ├── extractAudio.ts             ← FFmpeg → WAV
+│   ├── transcribe.ts               ← Whisper (con caché por proyecto)
+│   ├── cleanTranscription.ts       ← Limpieza de ruido
+│   ├── summarize.ts                ← Ollama (con benchmark)
+│   ├── benchmark.ts                ← Generación de metadata/benchmark
+│   ├── progress.ts                 ← UI de progreso
 │   └── templates/
-│       └── meetingSummary.ts   ← Plantilla del prompt para resúmenes
-├── transcriptions/             ← Caché de transcripciones (gitignored)
-├── .kiro/steering/             ← Guías de desarrollo
-└── .gitignore
+│       └── meetingSummary.ts       ← Prompt del resumen
+├── projects/                       ← Salida organizada por reunión (gitignored)
+│   └── Exlam/
+│       ├── transcriptions/
+│       │   ├── 2026-05-25 15-04-19.txt
+│       │   └── Exlam_completa.txt
+│       ├── Exlam_resumen.md
+│       └── Exlam_benchmark.md
+├── .kiro/steering/
+└── package.json
 ```
 
-## Stack Tecnológico
+## Pipeline de Procesamiento
 
-- **Runtime**: Bun v1.3.14+
-- **Lenguaje**: TypeScript (ESNext, modo bundler)
-- **LLM Local**: Ollama con modelo `qwen3:14b` (preferido por calidad de resúmenes)
-- **Transcripción**: whisper-cpp (whisper-cli)
-- **Extracción de audio**: FFmpeg
-- **Cliente LLM**: openai SDK (compatible con API de Ollama)
+```
+Video/Audio → FFmpeg → WAV → Whisper (sin timestamps) → Texto plano
+                                                              ↓
+                                                   Concatenar todo (un solo texto)
+                                                              ↓
+                                                        Pre-limpieza
+                                                              ↓
+                                                   Resumen directo (Ollama)
+                                                              ↓
+                                                      archivo_resumen.md
+```
+
+**Sin chunks** — el texto va directo al modelo. Un solo prompt, un solo resumen coherente.
+
+## Configuración LLM
+
+- **Modelo**: `gemma4:e4b`
+- **Temperatura**: 0.2 (baja para evitar alucinaciones)
+- **top_p**: 0.8
+- **Idioma**: ESPAÑOL obligatorio (reforzado en system + user prompt)
+- **Sin `/no_think`** — gemma4 no lo necesita
 
 ## Variables de Entorno
 
 ```bash
 WHISPER_BIN=whisper-cli
 WHISPER_MODEL=/opt/homebrew/share/whisper-cpp/ggml-large-v3-turbo.bin
-OLLAMA_MODEL=qwen3:14b
+OLLAMA_MODEL=gemma4:e4b
 OLLAMA_BASE_URL=http://localhost:11434/v1
 ```
 
-## Pipeline de Procesamiento
-
-1. **Entrada**: Archivo de video o carpeta con múltiples archivos
-2. **Paso 1**: Extraer audio con FFmpeg → WAV 16kHz mono
-3. **Paso 2**: Transcribir audio con whisper-cpp → texto (con caché en `transcriptions/`)
-4. **Paso 3**: Resumir/analizar con Ollama (qwen3:14b) → Markdown
-5. **Salida**: Un solo archivo `_resumen.md`
-
 ## Caché de Transcripciones
 
-- Las transcripciones se guardan en `transcriptions/` para evitar reprocesar archivos ya transcritos.
-- El caché usa un hash MD5 del path del archivo como identificador.
-- La carpeta está en `.gitignore` para no rastrear archivos generados.
+- Cada reunión genera su carpeta en `projects/<nombre>/transcriptions/`.
+- Los archivos individuales se nombran igual que el video original (sin extensión).
+- `<nombre>_completa.txt` es el texto unificado.
+- **Validación por fecha de modificación**: si el video fuente fue modificado después del caché, se re-transcribe. Si no cambió, se reutiliza.
+- Para forzar re-transcripción: borrar el `.txt` correspondiente.
 
-## Plantillas de Prompts
+## Benchmark
 
-- Las plantillas de prompts están en `src/templates/`.
-- Cada plantilla exporta el system prompt y una función para construir el user prompt.
-- Esto permite iterar sobre los prompts sin tocar la lógica del pipeline.
-- **IMPORTANTE**: El modelo qwen3:14b requiere `/no_think` al inicio del system prompt para evitar que responda en inglés.
+Cada ejecución genera `<nombre>_benchmark.md` con:
+- Modelo de Ollama usado, temperatura, top_p
+- Modelo de Whisper, binario
+- Tiempo por archivo de transcripción (y si usó caché)
+- Tiempo del resumen
+- Métricas de texto: input crudo, input limpio, output, ratio de compresión
+- Tiempo total del pipeline
+- Configuración completa en JSON
+
+## Plantilla de Prompt
+
+En `src/templates/meetingSummary.ts`:
+- `MASTER_SUMMARY_SYSTEM_PROMPT`: prompt del resumen ejecutivo
+- `buildMasterUserPrompt()`: construye el mensaje del usuario con la transcripción
+- Formato de salida: Markdown con secciones (Resumen Ejecutivo, Participantes, Temas, Decisiones, Tareas, Riesgos, Próximos Pasos)
 
 ## Convenciones de Código
 
-- Usar APIs nativas de Bun cuando estén disponibles (`Bun.write`, `Bun.argv`, `spawnSync` de bun)
-- Cada módulo en `src/` tiene una responsabilidad única
-- Interfaces explícitas para resultados de cada paso (Result pattern)
-- Mensajes de consola con emojis para indicar progreso
+- APIs nativas de Bun (`Bun.write`, `Bun.argv`, `spawnSync`)
+- Cada módulo = una responsabilidad (SRP)
+- Interfaces explícitas para resultados (Result pattern)
 - Progress bar visual para operaciones largas
-- Idioma del código: inglés para variables/funciones, español para mensajes al usuario
+- Idioma: inglés para código, español para mensajes al usuario
 
-## Modelo LLM Recomendado
+## Pre-limpieza de Transcripciones
 
-Se usa **qwen3:14b** vía Ollama por las siguientes razones:
-- Mejor calidad en resúmenes largos
-- Mejor manejo de contexto extenso
-- Sigue instrucciones con mayor precisión
-- Menos alucinaciones que modelos más pequeños
+El módulo `cleanTranscription.ts` aplica 10 pasos:
 
-Para ejecutar: `ollama run qwen3:14b`
+1. Eliminar líneas vacías
+2. Detectar y eliminar loops de repetición (bug de whisper)
+3. Eliminar líneas de palabras sueltas repetidas ("Ok. Ok. Ok.")
+4. Deduplicar repeticiones inline
+5. Eliminar muletillas (ehh, mmm, o sea, básicamente, digamos, etc.)
+6. Eliminar confirmaciones vacías (ya, dale, listo, ok, sí, no)
+7. Eliminar líneas muy cortas (< 10 chars)
+8. Eliminar duplicados consecutivos
+9. Limpiar espacios múltiples
+10. Filtro final
+
+## Decisiones Técnicas
+
+| Decisión | Razón |
+|----------|-------|
+| Sin chunks | Dividir pierde contexto, resumen sale incoherente |
+| Sin timestamps | Agregan ruido al texto sin beneficio real |
+| Resumen directo | gemma4:e4b tiene ventana de contexto amplia |
+| Caché por sesión | Organización clara, fácil de relacionar con el resumen |
+| Validación por mtime | Evita re-transcribir si el archivo no cambió |
+| Temperatura 0.2 | Evita alucinaciones e invenciones |
+| Sin `/no_think` | gemma4 no lo necesita, responde bien en español |

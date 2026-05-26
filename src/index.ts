@@ -1,12 +1,23 @@
-import { existsSync, readdirSync, statSync, unlinkSync } from "fs";
+import { existsSync, readdirSync, statSync, unlinkSync, mkdirSync } from "fs";
 import { join, basename, extname } from "path";
 import { CONFIG, validateConfig } from "./config";
 import { extractAudio } from "./extractAudio";
-import { transcribeAudio, getCachedTranscription } from "./transcribe";
-import { summarize } from "./summarize";
+import { transcribeAudio, getCachedTranscription, saveFullTranscription } from "./transcribe";
+import { summarize, type TemplateMode } from "./summarize";
+import { saveBenchmark, type FullBenchmark, type TranscriptionBenchmark } from "./benchmark";
 import { createProgressBar, createSpinner } from "./progress";
 
-export async function run(inputPath: string): Promise<void> {
+const PROJECTS_DIR = join(import.meta.dir, "..", "projects");
+
+function ensureProjectDir(sessionName: string): string {
+  const projectDir = join(PROJECTS_DIR, sessionName);
+  if (!existsSync(projectDir)) mkdirSync(projectDir, { recursive: true });
+  return projectDir;
+}
+
+export async function run(inputPath: string, mode: TemplateMode = "chronology"): Promise<void> {
+  const pipelineStart = Date.now();
+
   if (!existsSync(inputPath)) {
     console.error(`❌ Ruta no encontrada: ${inputPath}`);
     process.exit(1);
@@ -35,14 +46,17 @@ export async function run(inputPath: string): Promise<void> {
     console.log(`\n📄 Archivo: ${basename(inputPath)}`);
   }
 
-  // Nombre del archivo de salida
-  const outputMd = stat.isDirectory()
-    ? join(inputPath, `${basename(inputPath)}_resumen.md`)
-    : inputPath.replace(/\.[^.]+$/, "") + "_resumen.md";
+  // Nombre de la sesión y directorio del proyecto
+  const sessionName = stat.isDirectory() ? basename(inputPath) : basename(inputPath).replace(/\.[^.]+$/, "");
+  const projectDir = ensureProjectDir(sessionName);
+
+  console.log(`   📁 Proyecto: projects/${sessionName}/`);
 
   // Procesar cada archivo
   const progress = createProgressBar("📊 Progreso");
-  const transcripciones: string[] = [];
+  const textos: string[] = [];
+  const transcriptionBenchmarks: TranscriptionBenchmark[] = [];
+  let totalWhisperMs = 0;
 
   for (let i = 0; i < files.length; i++) {
     const file = files[i]!;
@@ -51,11 +65,12 @@ export async function run(inputPath: string): Promise<void> {
 
     progress.update(i, files.length, `Procesando: ${fileName}`);
 
-    // Verificar si ya existe transcripción en caché
-    const cached = getCachedTranscription(file);
+    // Verificar si ya existe transcripción válida en caché
+    const cached = getCachedTranscription(file, projectDir);
     if (cached) {
-      console.log(`\n   ♻️  [${i + 1}/${files.length}] Caché encontrado: ${fileName}`);
-      transcripciones.push(`--- Segmento: ${fileName} ---\n${cached}`);
+      console.log(`\n   ♻️  [${i + 1}/${files.length}] Caché válido: ${fileName}`);
+      textos.push(cached);
+      transcriptionBenchmarks.push({ file: fileName, durationMs: 0, chars: cached.length, cached: true });
       continue;
     }
 
@@ -70,37 +85,71 @@ export async function run(inputPath: string): Promise<void> {
 
     // Paso 2: Transcribir
     const spinnerTranscribe = createSpinner(`[${i + 1}/${files.length}] Transcribiendo: ${fileName} (puede tardar minutos)`);
-    const transcribeResult = transcribeAudio(audioTmp, file);
+    const transcribeResult = transcribeAudio(audioTmp, file, projectDir);
     if (!transcribeResult.success) {
       spinnerTranscribe.stop(`❌ ${transcribeResult.error}`);
       process.exit(1);
     }
-    spinnerTranscribe.stop(`✅ [${i + 1}/${files.length}] Transcrito: ${fileName} (${transcribeResult.text.length} chars)`);
-    transcripciones.push(`--- Segmento: ${fileName} ---\n${transcribeResult.text}`);
+    spinnerTranscribe.stop(`✅ [${i + 1}/${files.length}] Transcrito: ${fileName} (${transcribeResult.text.length} chars, ${Math.round(transcribeResult.durationMs / 1000)}s)`);
+    textos.push(transcribeResult.text);
+    totalWhisperMs += transcribeResult.durationMs;
+    transcriptionBenchmarks.push({
+      file: fileName,
+      durationMs: transcribeResult.durationMs,
+      chars: transcribeResult.text.length,
+      cached: false,
+    });
 
     // Limpiar audio temporal
     if (existsSync(audioTmp)) unlinkSync(audioTmp);
   }
 
-  progress.complete(`${transcripciones.length} archivo(s) procesado(s)`);
+  progress.complete(`${textos.length} archivo(s) procesado(s)`);
 
-  if (transcripciones.length === 0) {
+  if (textos.length === 0) {
     console.error("❌ No se obtuvo ninguna transcripción.");
     process.exit(1);
   }
 
-  const transcripcionCompleta = transcripciones.join("\n\n");
+  // Unir todo como un solo texto continuo
+  const transcripcionCompleta = textos.join(" ");
   console.log(`\n📄 Transcripción total: ${transcripcionCompleta.length} caracteres`);
 
+  // Guardar transcripción completa
+  saveFullTranscription(projectDir, sessionName, transcripcionCompleta);
+
   // Paso 3: Resumir con Ollama
-  const spinnerSummary = createSpinner("Generando resumen con Ollama... (puede tardar varios minutos)");
-  const summaryResult = await summarize(transcripcionCompleta, transcripciones.length);
+  console.log(`\n📝 Procesando con ${CONFIG.ollamaModel} [${mode}]...`);
+  const summaryResult = await summarize(transcripcionCompleta, textos.length, mode);
   if (!summaryResult.success) {
-    spinnerSummary.stop(`❌ ${summaryResult.error}`);
+    console.error(`❌ ${summaryResult.error}`);
     process.exit(1);
   }
-  spinnerSummary.stop("✅ Resumen generado por Ollama");
 
+  // Guardar resultado en el proyecto
+  const suffix = mode === "chronology" ? "cronologia" : "resumen";
+  const outputMd = join(projectDir, `${sessionName}_${suffix}.md`);
   await Bun.write(outputMd, summaryResult.markdown);
-  console.log(`\n✅ Archivo guardado: ${outputMd}`);
+
+  // Guardar benchmark
+  const totalDurationMs = Date.now() - pipelineStart;
+  const benchmarkData: FullBenchmark = {
+    session: sessionName,
+    date: new Date().toLocaleString("es-PE"),
+    source: inputPath,
+    filesProcessed: files.length,
+    whisper: {
+      model: basename(CONFIG.whisperModel),
+      bin: CONFIG.whisperBin,
+      files: transcriptionBenchmarks,
+      totalDurationMs: totalWhisperMs,
+    },
+    summary: summaryResult.benchmark!,
+    totalDurationMs,
+  };
+  saveBenchmark(projectDir, sessionName, benchmarkData);
+
+  console.log(`\n✅ Guardado: projects/${sessionName}/${sessionName}_${suffix}.md`);
+  console.log(`📊 Benchmark: projects/${sessionName}/${sessionName}_benchmark.md`);
+  console.log(`⏱️  Tiempo total: ${Math.round(totalDurationMs / 1000)}s`);
 }
