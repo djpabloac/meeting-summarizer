@@ -1,6 +1,6 @@
 import { writeFileSync } from "fs";
 import { join } from "path";
-import { CONFIG } from "./config";
+import { CONFIG, getLLMConfig } from "./config";
 import type { BenchmarkData } from "./summarize";
 
 export interface TranscriptionBenchmark {
@@ -35,7 +35,6 @@ export function generateBenchmarkMarkdown(data: FullBenchmark): string {
 **Fecha**: ${data.date}
 **Fuente**: \`${data.source}\`
 **Archivos procesados**: ${data.filesProcessed}
-**Plantilla**: ${data.summary.template}
 **Tiempo total**: ${totalTime}s
 
 ---
@@ -60,17 +59,22 @@ export function generateBenchmarkMarkdown(data: FullBenchmark): string {
     md += `| ${f.file} | ${time} | ${f.chars.toLocaleString()} | ${cache} |\n`;
   }
 
+  const organizeTime = Math.round(data.summary.organizeDurationMs / 1000);
+  const summaryStepTime = Math.round(data.summary.summaryDurationMs / 1000);
+
   md += `
 ---
 
-## Resumen (Ollama)
+## LLM Doble Pasada (Ollama)
 
 | Parámetro | Valor |
 |-----------|-------|
 | Modelo | \`${data.summary.model}\` |
 | Temperatura | ${data.summary.temperature} |
 | top_p | ${data.summary.topP} |
-| Tiempo | ${summaryTime}s |
+| Paso 1 (organizar) | ${organizeTime}s |
+| Paso 2 (resumir) | ${summaryStepTime}s |
+| Tiempo total LLM | ${summaryTime}s |
 
 ### Métricas de texto
 
@@ -79,6 +83,7 @@ export function generateBenchmarkMarkdown(data: FullBenchmark): string {
 | Input (crudo) | ${data.summary.inputChars.toLocaleString()} chars |
 | Input (limpio) | ${data.summary.cleanedChars.toLocaleString()} chars |
 | Reducción por limpieza | ${data.summary.reductionPercent}% |
+| Texto organizado (paso 1) | ${data.summary.organizedChars.toLocaleString()} chars |
 | Output (resumen) | ${data.summary.outputChars.toLocaleString()} chars |
 | Ratio compresión | ${Math.round((data.summary.outputChars / data.summary.cleanedChars) * 100)}% |
 
@@ -88,8 +93,8 @@ export function generateBenchmarkMarkdown(data: FullBenchmark): string {
 
 \`\`\`json
 ${JSON.stringify({
-  OLLAMA_MODEL: CONFIG.ollamaModel,
-  OLLAMA_BASE_URL: CONFIG.ollamaBaseUrl,
+  LLM_PROVIDER: CONFIG.llmProvider,
+  ...getLLMConfig(),
   WHISPER_BIN: CONFIG.whisperBin,
   WHISPER_MODEL: CONFIG.whisperModel,
 }, null, 2)}

@@ -22,16 +22,18 @@ meeting-summarizer/
 │   ├── extractAudio.ts             ← FFmpeg → WAV
 │   ├── transcribe.ts               ← Whisper (con caché por proyecto)
 │   ├── cleanTranscription.ts       ← Limpieza de ruido
-│   ├── summarize.ts                ← Ollama (con benchmark)
+│   ├── summarize.ts                ← Ollama doble pasada (organizar + resumir)
 │   ├── benchmark.ts                ← Generación de metadata/benchmark
 │   ├── progress.ts                 ← UI de progreso
 │   └── templates/
-│       └── meetingSummary.ts       ← Prompt del resumen
+│       ├── organizeTranscription.ts ← Prompt paso 1: ordenar transcripción
+│       └── meetingSummary.ts        ← Prompt paso 2: resumen ejecutivo
 ├── projects/                       ← Salida organizada por reunión (gitignored)
 │   └── Exlam/
 │       ├── transcriptions/
 │       │   ├── 2026-05-25 15-04-19.txt
 │       │   └── Exlam_completa.txt
+│       ├── Exlam_organizada.txt
 │       ├── Exlam_resumen.md
 │       └── Exlam_benchmark.md
 ├── .kiro/steering/
@@ -47,20 +49,33 @@ Video/Audio → FFmpeg → WAV → Whisper (sin timestamps) → Texto plano
                                                               ↓
                                                         Pre-limpieza
                                                               ↓
-                                                   Resumen directo (Ollama)
+                                              Paso 1: Organizar transcripción (Ollama)
+                                                              ↓
+                                              Paso 2: Resumen ejecutivo (Ollama)
                                                               ↓
                                                       archivo_resumen.md
 ```
 
-**Sin chunks** — el texto va directo al modelo. Un solo prompt, un solo resumen coherente.
+**Doble pasada LLM** — primero se organiza la transcripción por temas (elimina ruido, agrupa contexto), luego se genera el resumen ejecutivo sobre el texto ya organizado. Esto mejora significativamente la calidad del resumen.
 
 ## Configuración LLM
 
-- **Modelo**: `gemma4:e4b`
+Soporta dos proveedores: **local (Ollama)** o **externo (OpenAI-compatible)**.
+
+- Si `LLM_API_KEY` está definido → usa proveedor externo
+- Si no → usa Ollama local
+
+| Variable | Descripción | Default |
+|----------|-------------|---------|
+| `OLLAMA_MODEL` | Modelo local | `gemma4:e4b` |
+| `OLLAMA_BASE_URL` | URL de Ollama | `http://localhost:11434/v1` |
+| `LLM_API_KEY` | API key del proveedor externo | (vacío = local) |
+| `LLM_BASE_URL` | URL del proveedor externo | `https://api.openai.com/v1` |
+| `LLM_MODEL` | Modelo externo | `gpt-4o-mini` |
+
 - **Temperatura**: 0.2 (baja para evitar alucinaciones)
 - **top_p**: 0.8
 - **Idioma**: ESPAÑOL obligatorio (reforzado en system + user prompt)
-- **Sin `/no_think`** — gemma4 no lo necesita
 
 ## Variables de Entorno
 
@@ -92,9 +107,15 @@ Cada ejecución genera `<nombre>_benchmark.md` con:
 
 ## Plantilla de Prompt
 
-En `src/templates/meetingSummary.ts`:
+Dos plantillas en `src/templates/`:
+
+**organizeTranscription.ts** (Paso 1):
+- `ORGANIZE_SYSTEM_PROMPT`: reorganiza por temas, elimina ruido, conserva detalles
+- `buildOrganizeUserPrompt()`: envía la transcripción limpia para organizar
+
+**meetingSummary.ts** (Paso 2):
 - `MASTER_SUMMARY_SYSTEM_PROMPT`: prompt del resumen ejecutivo
-- `buildMasterUserPrompt()`: construye el mensaje del usuario con la transcripción
+- `buildMasterUserPrompt()`: envía el texto ya organizado para resumir
 - Formato de salida: Markdown con secciones (Resumen Ejecutivo, Participantes, Temas, Decisiones, Tareas, Riesgos, Próximos Pasos)
 
 ## Convenciones de Código
@@ -124,10 +145,18 @@ El módulo `cleanTranscription.ts` aplica 10 pasos:
 
 | Decisión | Razón |
 |----------|-------|
+| Doble pasada LLM | Organizar primero mejora contexto → mejor resumen |
 | Sin chunks | Dividir pierde contexto, resumen sale incoherente |
 | Sin timestamps | Agregan ruido al texto sin beneficio real |
-| Resumen directo | gemma4:e4b tiene ventana de contexto amplia |
+| Sin selección de modo | El objetivo siempre es el resumen ejecutivo |
 | Caché por sesión | Organización clara, fácil de relacionar con el resumen |
 | Validación por mtime | Evita re-transcribir si el archivo no cambió |
 | Temperatura 0.2 | Evita alucinaciones e invenciones |
 | Sin `/no_think` | gemma4 no lo necesita, responde bien en español |
+
+## Historial de Cambios
+
+| Fecha | Cambio |
+|-------|--------|
+| 2026-05-30 | Agregado soporte para proveedor LLM externo (OpenAI-compatible). Se guarda `_organizada.txt` con el resultado del paso 1 para revisión. |
+| 2026-05-30 | Implementada doble pasada LLM: paso 1 organiza transcripción por temas, paso 2 genera resumen ejecutivo. Eliminado flag `--mode` y `TemplateMode` (siempre resumen). Eliminada plantilla `meetingChronology.ts`. Creada `organizeTranscription.ts`. Benchmark ahora incluye métricas de ambos pasos. |

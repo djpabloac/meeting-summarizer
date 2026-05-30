@@ -1,9 +1,9 @@
 import { existsSync, readdirSync, statSync, unlinkSync, mkdirSync } from "fs";
 import { join, basename, extname } from "path";
-import { CONFIG, validateConfig } from "./config";
+import { CONFIG, validateConfig, getLLMConfig } from "./config";
 import { extractAudio } from "./extractAudio";
 import { transcribeAudio, getCachedTranscription, saveFullTranscription } from "./transcribe";
-import { summarize, type TemplateMode } from "./summarize";
+import { summarize } from "./summarize";
 import { saveBenchmark, type FullBenchmark, type TranscriptionBenchmark } from "./benchmark";
 import { createProgressBar, createSpinner } from "./progress";
 
@@ -15,7 +15,7 @@ function ensureProjectDir(sessionName: string): string {
   return projectDir;
 }
 
-export async function run(inputPath: string, mode: TemplateMode = "chronology"): Promise<void> {
+export async function run(inputPath: string): Promise<void> {
   const pipelineStart = Date.now();
 
   if (!existsSync(inputPath)) {
@@ -118,18 +118,22 @@ export async function run(inputPath: string, mode: TemplateMode = "chronology"):
   // Guardar transcripción completa
   saveFullTranscription(projectDir, sessionName, transcripcionCompleta);
 
-  // Paso 3: Resumir con Ollama
-  console.log(`\n📝 Procesando con ${CONFIG.ollamaModel} [${mode}]...`);
-  const summaryResult = await summarize(transcripcionCompleta, textos.length, mode);
+  // Paso 3: Resumir con Ollama (doble pasada)
+  const llm = getLLMConfig();
+  console.log(`\n📝 Procesando con ${llm.model} (doble pasada)...`);
+  const summaryResult = await summarize(transcripcionCompleta, textos.length);
   if (!summaryResult.success) {
     console.error(`❌ ${summaryResult.error}`);
     process.exit(1);
   }
 
   // Guardar resultado en el proyecto
-  const suffix = mode === "chronology" ? "cronologia" : "resumen";
-  const outputMd = join(projectDir, `${sessionName}_${suffix}.md`);
+  const outputMd = join(projectDir, `${sessionName}_resumen.md`);
   await Bun.write(outputMd, summaryResult.markdown);
+
+  // Guardar transcripción organizada (paso 1)
+  const organizedFile = join(projectDir, `${sessionName}_organizada.txt`);
+  await Bun.write(organizedFile, summaryResult.organizedText);
 
   // Guardar benchmark
   const totalDurationMs = Date.now() - pipelineStart;
@@ -149,7 +153,8 @@ export async function run(inputPath: string, mode: TemplateMode = "chronology"):
   };
   saveBenchmark(projectDir, sessionName, benchmarkData);
 
-  console.log(`\n✅ Guardado: projects/${sessionName}/${sessionName}_${suffix}.md`);
+  console.log(`\n✅ Guardado: projects/${sessionName}/${sessionName}_resumen.md`);
+  console.log(`📋 Organizada: projects/${sessionName}/${sessionName}_organizada.txt`);
   console.log(`📊 Benchmark: projects/${sessionName}/${sessionName}_benchmark.md`);
   console.log(`⏱️  Tiempo total: ${Math.round(totalDurationMs / 1000)}s`);
 }
