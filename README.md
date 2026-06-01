@@ -79,6 +79,22 @@ La selección de proveedor es automática: si `LLM_API_KEY` está definido se us
 
 ---
 
+## Módulo QA (documentos de evidencias)
+
+Genera el **esqueleto del documento de evidencias de QA** a partir de una reunión ya procesada. Es **independiente** del flujo de resumen/Notion: consume los hechos ya extraídos (`<sesión>_extraction.md`) y no re-transcribe.
+
+```bash
+bun run qa.ts <nombre-de-sesión o ruta-del-proyecto>   # ej. bun run qa.ts Exlam
+```
+
+Por cada feature identificado escribe `projects/<sesión>/qa/<feature>_qa.md` con la plantilla de 7 puntos: título, objetivo, alcance, pre-condición, evidencias de casos (enumeradas), observaciones y resumen final.
+
+**Qué automatiza y qué no**: la reunión solo aporta el *alcance*. El módulo auto-rellena puntos 1–4 y enumera los casos del punto 5; las evidencias (imágenes), observaciones (6) y hallazgos (7) quedan como placeholders para completar **tras ejecutar las pruebas**. No inventa resultados.
+
+Opcional: `QA_USE_TRANSCRIPT=1` pasa la transcripción completa como contexto extra para enriquecer las pre-condiciones (el flujo por defecto solo usa los hechos).
+
+---
+
 ## Roadmap
 
 ### Fase 1 — Script CLI (actual) ✅ En progreso
