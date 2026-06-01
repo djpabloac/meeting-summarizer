@@ -20,6 +20,17 @@ function getCacheFileName(filePath: string): string {
 }
 
 /**
+ * Glosario de dominio para sesgar el vocabulario de Whisper.
+ * Prioriza el archivo (WHISPER_PROMPT_FILE) sobre el inline (WHISPER_PROMPT).
+ */
+function resolveWhisperPrompt(): string {
+  if (CONFIG.whisperPromptFile && existsSync(CONFIG.whisperPromptFile)) {
+    return readFileSync(CONFIG.whisperPromptFile, "utf-8").trim();
+  }
+  return CONFIG.whisperPrompt;
+}
+
+/**
  * Verifica si la transcripción cacheada sigue siendo válida.
  * Compara la fecha de modificación del archivo fuente con la del caché.
  */
@@ -79,8 +90,21 @@ export function transcribeAudio(audioPath: string, originalFilePath: string, pro
   // Transcribir sin timestamps
   const args = [
     CONFIG.whisperBin, "-m", CONFIG.whisperModel,
-    "-f", audioPath, "-l", "auto", "--no-timestamps",
+    "-f", audioPath,
+    "-l", CONFIG.whisperLang,
+    "-mc", CONFIG.whisperMaxContext,
+    "--no-timestamps",
   ];
+
+  if (CONFIG.whisperBeamSize) args.push("-bs", CONFIG.whisperBeamSize);
+
+  const prompt = resolveWhisperPrompt();
+  if (prompt) args.push("--prompt", prompt);
+
+  if (CONFIG.whisperVad) {
+    args.push("--vad");
+    if (CONFIG.whisperVadModel) args.push("-vm", CONFIG.whisperVadModel);
+  }
 
   const startTime = Date.now();
   const result = spawnSync(args);

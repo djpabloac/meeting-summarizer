@@ -52,6 +52,16 @@ Video/Audio ──FFmpeg──▶ WAV 16kHz mono ──Whisper──▶ texto pl
 WHISPER_BIN=whisper-cli
 WHISPER_MODEL=/opt/homebrew/share/whisper-cpp/ggml-large-v3-turbo.bin
 
+# Transcripción — precisión (opcionales, con defaults)
+WHISPER_LANG=es                    # idioma forzado (mejor que auto-detect)
+WHISPER_MAX_CONTEXT=0              # 0 = no arrastrar contexto entre ventanas (anti-loop)
+WHISPER_BEAM_SIZE=                 # vacío = greedy; "5" = beam search (más preciso, más lento)
+WHISPER_PROMPT=                    # glosario inline: nombres de producto, stack, participantes
+WHISPER_PROMPT_FILE=              # o ruta a un archivo con el glosario (tiene prioridad)
+WHISPER_VAD=0                     # 1 = activar VAD (elimina alucinaciones en silencios)
+WHISPER_VAD_MODEL=               # ruta al modelo VAD ggml (requerido si WHISPER_VAD=1)
+AUDIO_FILTER=loudnorm            # filtro FFmpeg; "loudnorm,afftdn=nf=-25" si hay ruido
+
 # LLM local (default)
 OLLAMA_MODEL=qwen3:14b
 OLLAMA_BASE_URL=http://localhost:11434/v1
@@ -64,6 +74,8 @@ LLM_MODEL=gpt-4o-mini
 ```
 
 La selección de proveedor es automática: si `LLM_API_KEY` está definido se usa el proveedor externo; si no, Ollama local. Parámetros de muestreo fijos: `temperature=0.2`, `top_p=0.8`.
+
+> **Glosario (`WHISPER_PROMPT` / `WHISPER_PROMPT_FILE`)**: es lo que más mejora el reconocimiento de jerga técnica y nombres propios. Whisper trunca el prompt a ~224 tokens, así que mantenlo conciso: nombres de producto/módulos, stack y participantes. Ejemplo: `"Reunión técnica. Stack: React, Kubernetes, PostgreSQL. Producto: Exlam. Participantes: Rafael, ..."`.
 
 ---
 

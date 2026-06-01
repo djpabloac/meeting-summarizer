@@ -1,5 +1,6 @@
 import { spawnSync } from "bun";
 import { basename } from "path";
+import { CONFIG } from "./config";
 
 export interface AudioExtractionResult {
   outputPath: string;
@@ -8,10 +9,11 @@ export interface AudioExtractionResult {
 }
 
 export function extractAudio(videoPath: string, outputPath: string): AudioExtractionResult {
-  const result = spawnSync([
-    "ffmpeg", "-y", "-i", videoPath,
-    "-vn", "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le", outputPath,
-  ]);
+  const args = ["ffmpeg", "-y", "-i", videoPath, "-vn"];
+  if (CONFIG.audioFilter) args.push("-af", CONFIG.audioFilter);
+  args.push("-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le", outputPath);
+
+  const result = spawnSync(args);
 
   if (!result.success) {
     return {
