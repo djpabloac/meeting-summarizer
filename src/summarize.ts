@@ -1,9 +1,9 @@
 import { OpenAI } from "openai";
-import { CONFIG, getLLMConfig } from "./config";
-import { cleanTranscription } from "./cleanTranscription";
-import { ORGANIZE_SYSTEM_PROMPT, buildOrganizeUserPrompt } from "./templates/organizeTranscription";
-import { MASTER_SUMMARY_SYSTEM_PROMPT, buildMasterUserPrompt } from "./templates/meetingSummary";
+import { getLLMConfig } from "./config";
 import { createSpinner } from "./progress";
+import { buildFactExtractionPrompt, FACT_EXTRACTION_SYSTEM_PROMPT } from "./templates/extractionSystem";
+import { buildExecutiveSummaryPrompt, EXECUTIVE_SUMMARY_SYSTEM_PROMPT } from "./templates/executiveSummarySystem";
+import saveLLMPayload from "./llmUtils";
 
 const llmConfig = getLLMConfig();
 const client = new OpenAI({
@@ -34,15 +34,19 @@ export interface BenchmarkData {
 
 export interface SummaryResult {
   markdown: string;
-  organizedText: string;
+  extraction: string;
   success: boolean;
   error?: string;
   benchmark?: BenchmarkData;
 }
 
-async function callLLM(system: string, user: string): Promise<{ content: string; durationMs: number }> {
-  const start = Date.now();
-  const response = await client.chat.completions.create({
+async function callLLM(
+  system: string,
+  user: string,
+  projectDir?: string,
+  label?: string
+): Promise<{ content: string; durationMs: number }> {
+  const payload = {
     model: llmConfig.model,
     temperature: LLM_OPTIONS.temperature,
     top_p: LLM_OPTIONS.top_p,
@@ -50,38 +54,58 @@ async function callLLM(system: string, user: string): Promise<{ content: string;
       { role: "system", content: system },
       { role: "user", content: user },
     ],
-  });
+  };
+
+  // Save payload for debugging/validation if projectDir provided
+  if (projectDir) {
+    try {
+      const name = label ? `${label}` : "payload";
+      await saveLLMPayload(projectDir, name, payload);
+    } catch (err) {
+      // Non-fatal: log and continue
+      console.warn("No se pudo guardar payload LLM:", err);
+    }
+  }
+
+  const start = Date.now();
+  const response = await client.chat.completions.create(payload as any);
+
   const durationMs = Date.now() - start;
   const content = response?.choices?.[0]?.message.content ?? "";
   return { content, durationMs };
 }
 
-export async function summarize(transcripcion: string, segmentos: number): Promise<SummaryResult> {
+export async function summarize(transcripcion: string, segmentos: number, projectDir?: string, sessionName?: string): Promise<SummaryResult> {
   try {
-    // Pre-limpieza
-    const cleaned = cleanTranscription(transcripcion);
-    const reductionPercent = Math.round((1 - cleaned.length / transcripcion.length) * 100);
-    console.log(`   🧹 Limpieza: ${transcripcion.length} → ${cleaned.length} chars (${reductionPercent}% reducido)`);
-
-    // Paso 1: Ordenar transcripción
-    const spinnerOrg = createSpinner(`Paso 1/2: Organizando transcripción con ${llmConfig.model}...`);
-    const organized = await callLLM(ORGANIZE_SYSTEM_PROMPT, buildOrganizeUserPrompt(cleaned, segmentos));
+    // Paso 1: Extracción de hechos
+    const spinnerOrg = createSpinner(`Paso 1/2: Extracción de hechos con ${llmConfig.model}...`);
+    const organized = await callLLM(
+      FACT_EXTRACTION_SYSTEM_PROMPT,
+      buildFactExtractionPrompt(transcripcion, segmentos),
+      projectDir,
+      sessionName ? `fact_extraction_${sessionName}` : "fact_extraction"
+    );
 
     if (!organized.content) {
-      spinnerOrg.stop("❌ No se pudo organizar la transcripción");
-      return { markdown: "", organizedText: "", success: false, error: "Ollama no generó contenido en paso de organización" };
+      spinnerOrg.stop("❌ No se pudo extracción de hechos la transcripción");
+      return { markdown: "", extraction: "", success: false, error: "Ollama no generó contenido en paso de extracción de hechos" };
     }
-    spinnerOrg.stop(`✅ Paso 1/2: Transcripción organizada (${organized.content.length} chars, ${Math.round(organized.durationMs / 1000)}s)`);
+    spinnerOrg.stop(`✅ Paso 1/2: Extracción de hechos (${organized.content.length} chars, ${Math.round(organized.durationMs / 1000)}s)`);
 
-    // Paso 2: Generar resumen
-    const spinnerSum = createSpinner(`Paso 2/2: Generando resumen con ${llmConfig.model}...`);
-    const summary = await callLLM(MASTER_SUMMARY_SYSTEM_PROMPT, buildMasterUserPrompt(organized.content, segmentos));
+    // Paso 2: Resumen ejecutivo
+    const spinnerSum = createSpinner(`Paso 2/2: Generando resumen ejecutivo con ${llmConfig.model}...`);
+    const summary = await callLLM(
+      EXECUTIVE_SUMMARY_SYSTEM_PROMPT,
+      buildExecutiveSummaryPrompt(organized.content),
+      projectDir,
+      sessionName ? `executive_summary_${sessionName}` : "executive_summary"
+    );
 
     if (!summary.content) {
-      spinnerSum.stop("❌ No se pudo generar el resumen");
-      return { markdown: "", organizedText: organized.content, success: false, error: "Ollama no generó contenido en paso de resumen" };
+      spinnerSum.stop("❌ No se pudo generar el resumen ejecutivo");
+      return { markdown: "", extraction: organized.content, success: false, error: "Ollama no generó contenido en paso de resumen ejecutivo" };
     }
-    spinnerSum.stop(`✅ Paso 2/2: Resumen generado (${summary.content.length} chars, ${Math.round(summary.durationMs / 1000)}s)`);
+    spinnerSum.stop(`✅ Paso 2/2: Resumen ejecutivo generado (${summary.content.length} chars, ${Math.round(summary.durationMs / 1000)}s)`);
 
     const totalDurationMs = organized.durationMs + summary.durationMs;
 
@@ -90,8 +114,8 @@ export async function summarize(transcripcion: string, segmentos: number): Promi
       temperature: LLM_OPTIONS.temperature,
       topP: LLM_OPTIONS.top_p,
       inputChars: transcripcion.length,
-      cleanedChars: cleaned.length,
-      reductionPercent,
+      cleanedChars: transcripcion.length,
+      reductionPercent: 0,
       organizedChars: organized.content.length,
       organizeDurationMs: organized.durationMs,
       outputChars: summary.content.length,
@@ -101,8 +125,8 @@ export async function summarize(transcripcion: string, segmentos: number): Promi
       timestamp: new Date().toISOString(),
     };
 
-    return { markdown: summary.content, organizedText: organized.content, success: true, benchmark };
+    return { markdown: summary.content, extraction: organized.content, success: true, benchmark };
   } catch (err) {
-    return { markdown: "", organizedText: "", success: false, error: `Error de Ollama: ${err}` };
+    return { markdown: "", extraction: "", success: false, error: `Error de Ollama: ${err}` };
   }
 }

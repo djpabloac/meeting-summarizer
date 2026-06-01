@@ -121,7 +121,7 @@ export async function run(inputPath: string): Promise<void> {
   // Paso 3: Resumir con Ollama (doble pasada)
   const llm = getLLMConfig();
   console.log(`\n📝 Procesando con ${llm.model} (doble pasada)...`);
-  const summaryResult = await summarize(transcripcionCompleta, textos.length);
+  const summaryResult = await summarize(transcripcionCompleta, textos.length, projectDir, sessionName);
   if (!summaryResult.success) {
     console.error(`❌ ${summaryResult.error}`);
     process.exit(1);
@@ -132,8 +132,8 @@ export async function run(inputPath: string): Promise<void> {
   await Bun.write(outputMd, summaryResult.markdown);
 
   // Guardar transcripción organizada (paso 1)
-  const organizedFile = join(projectDir, `${sessionName}_organizada.txt`);
-  await Bun.write(organizedFile, summaryResult.organizedText);
+  const organizedFile = join(projectDir, `${sessionName}_extraction.md`);
+  await Bun.write(organizedFile, summaryResult.extraction);
 
   // Guardar benchmark
   const totalDurationMs = Date.now() - pipelineStart;
@@ -154,7 +154,7 @@ export async function run(inputPath: string): Promise<void> {
   saveBenchmark(projectDir, sessionName, benchmarkData);
 
   console.log(`\n✅ Guardado: projects/${sessionName}/${sessionName}_resumen.md`);
-  console.log(`📋 Organizada: projects/${sessionName}/${sessionName}_organizada.txt`);
+  console.log(`📋 Extracción: projects/${sessionName}/${sessionName}_extraction.md`);
   console.log(`📊 Benchmark: projects/${sessionName}/${sessionName}_benchmark.md`);
-  console.log(`⏱️  Tiempo total: ${Math.round(totalDurationMs / 1000)}s`);
+  console.log(`⏱️ Tiempo total: ${Math.round(totalDurationMs / 1000)}s`);
 }

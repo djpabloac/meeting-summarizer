@@ -8,7 +8,7 @@ export const CONFIG = {
 
   // LLM config — si LLM_API_KEY está definido, usa proveedor externo
   llmProvider: process.env.LLM_API_KEY ? "external" as const : "local" as const,
-  ollamaModel: process.env.OLLAMA_MODEL || "gemma4:e4b",
+  ollamaModel: process.env.OLLAMA_MODEL || "qwen3:14b",
   ollamaBaseUrl: process.env.OLLAMA_BASE_URL || "http://localhost:11434/v1",
   llmApiKey: process.env.LLM_API_KEY || "",
   llmBaseUrl: process.env.LLM_BASE_URL || "https://api.openai.com/v1",
